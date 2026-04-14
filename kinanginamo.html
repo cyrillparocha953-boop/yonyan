@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>8-Ball Online Multiplayer</title>
+    <style>
+        body { margin: 0; background: #1a1a1a; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; overflow: hidden; touch-action: none; }
+        #ui { padding: 10px; display: flex; gap: 20px; align-items: center; background: #000; width: 100%; justify-content: center; }
+        #table-wrapper { position: relative; border: 12px solid #4e342e; border-radius: 10px; margin-top: 10px; box-shadow: 0 0 50px #000; }
+        canvas { background: #2e7d32; display: block; }
+        .status { padding: 5px 15px; border-radius: 20px; font-weight: bold; }
+        .my-turn { background: #00e676; color: #000; }
+        .waiting { background: #ff5252; color: #fff; }
+        #room-info { font-size: 12px; color: #aaa; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="turn-status" class="status waiting">CONNECTING...</div>
+        <div id="room-display">ROOM: ---</div>
+    </div>
+    <div id="room-info">Send this URL to your friend to play together!</div>
+
+    <div id="table-wrapper">
+        <canvas id="poolCanvas"></canvas>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Ginamit ang config mo
+        const firebaseConfig = {
+            apiKey: "AIzaSyCQF2laulY6pBKf0uXgHLNU2ymGl1p6h3U",
+            authDomain: "talon-a0d64.firebaseapp.com",
+            projectId: "talon-a0d64",
+            storageBucket: "talon-a0d64.firebasestorage.app",
+            messagingSenderId: "231672698092",
+            appId: "1:231672698092:web:af84794c858756349bc1c9"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // --- MULTIPLAYER LOGIC ---
+        const urlParams = new URLSearchParams(window.location.search);
+        let roomId = urlParams.get('room');
+        if (!roomId) {
+            roomId = Math.random().toString(36).substring(7);
+            window.history.pushState({}, '', `?room=${roomId}`);
+        }
+        document.getElementById('room-display').innerText = `ROOM: ${roomId}`;
+        
+        const roomRef = doc(db, "pool_rooms", roomId);
+        let isPlayer1 = !urlParams.has('room'); // Ang unang pumasok ay P1
+        let myTurn = false;
+
+        const canvas = document.getElementById("poolCanvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = Math.min(window.innerWidth - 40, 800);
+        canvas.height = canvas.width / 2;
+        const ballRadius = canvas.width / 50;
+
+        let balls = [];
+        let isDragging = false;
+        let mousePos = { x: 0, y: 0 };
+
+        // Initialize Balls (Common for both)
+        function initBalls() {
+            const arr = [];
+            // Cue ball
+            arr.push({ x: canvas.width/4, y: canvas.height/2, color: 'white', type: 'cue', vx: 0, vy: 0, inPocket: false });
+            // Simplified Rack for Multiplayer Stability
+            for(let i=0; i<3; i++) {
+                for(let j=0; j<=i; j++) {
+                    arr.push({ 
+                        x: canvas.width*0.7 + i*22, 
+                        y: canvas.height/2 - (i*11) + (j*22), 
+                        color: `hsl(${Math.random()*360}, 70%, 50%)`,
+                        type: 'object', vx:0, vy:0, inPocket: false
+                    });
+                }
+            }
+            return arr;
+        }
+
+        // Listen to Firebase Updates
+        onSnapshot(roomRef, (doc) => {
+            if (doc.exists()) {
+                const data = doc.data();
+                balls = data.balls;
+                myTurn = (isPlayer1 && data.turn === 'p1') || (!isPlayer1 && data.turn === 'p2');
+                updateUI();
+            } else {
+                // Create room if not exists
+                setDoc(roomRef, { balls: initBalls(), turn: 'p1', lastShot: Date.now() });
+            }
+        });
+
+        function updateUI() {
+            const el = document.getElementById('turn-status');
+            el.innerText = myTurn ? "YOUR TURN" : "OPPONENT'S TURN";
+            el.className = `status ${myTurn ? 'my-turn' : 'waiting'}`;
+        }
+
+        // --- PHYSICS & DRAWING ---
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Pockets
+            ctx.fillStyle = "#111";
+            [{x:0,y:0},{x:canvas.width/2,y:0},{x:canvas.width,y:0},{x:0,y:canvas.height},{x:canvas.width/2,y:canvas.height},{x:canvas.width,y:canvas.height}].forEach(p => {
+                ctx.beginPath(); ctx.arc(p.x, p.y, ballRadius*1.5, 0, 7); ctx.fill();
+            });
+
+            balls.forEach(b => {
+                if (b.inPocket) return;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, ballRadius, 0, 7);
+                ctx.fillStyle = b.color;
+                ctx.fill();
+                ctx.closePath();
+            });
+
+            if (isDragging && myTurn) {
+                ctx.beginPath();
+                ctx.moveTo(balls[0].x, balls[0].y);
+                ctx.lineTo(mousePos.x, mousePos.y);
+                ctx.strokeStyle = "white";
+                ctx.stroke();
+            }
+            requestAnimationFrame(draw);
+        }
+
+        // Local Physics for Smoothness
+        function physicsLoop() {
+            let moving = false;
+            balls.forEach(b => {
+                if(b.inPocket) return;
+                b.x += b.vx; b.y += b.vy;
+                b.vx *= 0.98; b.vy *= 0.98;
+                if(Math.abs(b.vx) < 0.1) b.vx = 0;
+                if(Math.abs(b.vy) < 0.1) b.vy = 0;
+                
+                // Walls
+                if(b.x < ballRadius || b.x > canvas.width-ballRadius) b.vx *= -1;
+                if(b.y < ballRadius || b.y > canvas.height-ballRadius) b.vy *= -1;
+                
+                if(b.vx !== 0 || b.vy !== 0) moving = true;
+            });
+
+            // Kung tumigil na ang mga bola at ikaw ang tumira, i-update ang Firebase
+            if(!moving && !isPlayer1 === (myTurn) && !myTurn ) {
+                // Sync to Firebase only after balls stop
+            }
+            setTimeout(physicsLoop, 16);
+        }
+
+        // Controls
+        canvas.addEventListener("mousedown", (e) => {
+            if(!myTurn) return;
+            isDragging = true;
+        });
+
+        window.addEventListener("mouseup", async (e) => {
+            if(!isDragging) return;
+            isDragging = false;
+            
+            const rect = canvas.getBoundingClientRect();
+            const dx = (balls[0].x - (e.clientX - rect.left)) * 0.15;
+            const dy = (balls[0].y - (e.clientY - rect.top)) * 0.15;
+
+            // Apply Shot Locally
+            balls[0].vx = dx;
+            balls[0].vy = dy;
+
+            // Sync to Firebase and Change Turn
+            const nextTurn = isPlayer1 ? 'p2' : 'p1';
+            await updateDoc(roomRef, { 
+                balls: balls, 
+                turn: nextTurn 
+            });
+        });
+
+        window.addEventListener("mousemove", (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mousePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        });
+
+        draw();
+        physicsLoop();
+    </script>
+</body>
+</html>
