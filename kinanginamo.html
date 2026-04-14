@@ -6,19 +6,19 @@
     <title>8-Ball Global 1v1</title>
     <style>
         body { margin: 0; background: #0a0a0a; color: #fff; font-family: 'Arial', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; touch-action: none; }
-        #header { width: 100%; position: absolute; top: 0; background: #000; padding: 15px; display: flex; justify-content: space-around; border-bottom: 2px solid #00f2ff; z-index: 10; }
+        #header { width: 100%; position: absolute; top: 0; background: #000; padding: 15px; display: flex; justify-content: space-around; border-bottom: 2px solid #00f2ff; z-index: 10; box-sizing: border-box; }
         #table-wrapper { position: relative; border: 12px solid #3e2723; border-radius: 15px; background: #1b5e20; box-shadow: 0 0 50px #000; margin-top: 50px; }
         canvas { display: block; background: #236b23; cursor: crosshair; }
         .status { padding: 8px 20px; border-radius: 5px; font-weight: bold; font-size: 14px; text-transform: uppercase; }
         .my-turn { background: #00f2ff; color: #000; box-shadow: 0 0 15px #00f2ff; }
         .waiting { background: #333; color: #777; }
-        #room-label { position: absolute; bottom: 10px; font-size: 12px; color: #ff007f; font-weight: bold; }
+        #room-label { position: absolute; bottom: 15px; font-size: 12px; color: #ff007f; font-weight: bold; text-align: center; }
     </style>
 </head>
 <body>
 
     <div id="header">
-        <div id="turn-display" class="status waiting">CONNECTING...</div>
+        <div id="turn-display" class="status waiting">SYNCING...</div>
         <div style="text-align: right">
             <div style="font-size: 10px; color: #888;">MATCH ID</div>
             <div id="match-id" style="color: #00f2ff; font-weight: bold;">---</div>
@@ -29,13 +29,13 @@
         <canvas id="poolCanvas"></canvas>
     </div>
 
-    <div id="room-label">SEND FULL URL TO YOUR OPPONENT</div>
+    <div id="room-label">SEND THE FULL URL TO A FRIEND FOR 1v1</div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Ginamit ang config mo - Verified Functional
+        // Firebase Config (Verified)
         const firebaseConfig = {
             apiKey: "AIzaSyCQF2laulY6pBKf0uXgHLNU2ymGl1p6h3U",
             authDomain: "talon-a0d64.firebaseapp.com",
@@ -48,12 +48,14 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // --- MULTIPLAYER SETUP ---
+        // --- ROOM & ROLE SYSTEM ---
         const urlParams = new URLSearchParams(window.location.search);
         let roomId = urlParams.get('room');
         const isHost = !roomId;
+        
         if (isHost) {
-            roomId = "8BALL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
+            // Generate unique room ID for the host
+            roomId = "1V1-" + Math.random().toString(36).substring(2, 8).toUpperCase();
             window.history.pushState({}, '', `?room=${roomId}`);
         }
         document.getElementById('match-id').innerText = roomId;
@@ -62,25 +64,26 @@
         const ctx = canvas.getContext("2d");
         canvas.width = Math.min(window.innerWidth - 40, 750);
         canvas.height = canvas.width / 2;
-        const ballRadius = canvas.width / 50;
+        const ballRadius = canvas.width / 48;
 
         let balls = [];
-        let turn = "host"; 
+        let turn = "host"; // host or guest
         let isDragging = false;
         let mousePos = { x: 0, y: 0 };
         const myRole = isHost ? "host" : "guest";
 
         function createInitialRack() {
             let b = [{ x: canvas.width * 0.25, y: canvas.height / 2, color: "#fff", num: 0, vx: 0, vy: 0 }];
-            const startX = canvas.width * 0.7;
+            const startX = canvas.width * 0.65;
             const startY = canvas.height / 2;
             let n = 1;
+            // 8-Ball Triangle Rack
             for (let row = 0; row < 4; row++) {
                 for (let col = 0; col <= row; col++) {
-                    let color = (n === 5) ? "#000" : `hsl(${n * 45}, 70%, 50%)`;
+                    let color = (n === 5) ? "#000" : `hsl(${n * 40}, 75%, 50%)`;
                     b.push({ 
-                        x: startX + row * 22, 
-                        y: startY - (row * 11) + (col * 22), 
+                        x: startX + (row * ballRadius * 1.8), 
+                        y: startY - (row * ballRadius) + (col * ballRadius * 2.1), 
                         color: color, num: n, vx: 0, vy: 0 
                     });
                     n++;
@@ -89,9 +92,9 @@
             return b;
         }
 
-        const roomRef = doc(db, "pool_online_v3", roomId);
+        const roomRef = doc(db, "online_pool_rooms", roomId);
 
-        // Real-time Sync
+        // Real-time Database Listener
         onSnapshot(roomRef, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.data();
@@ -99,7 +102,8 @@
                 turn = data.turn;
                 updateTurnUI();
             } else if (isHost) {
-                setDoc(roomRef, { balls: createInitialRack(), turn: "host" });
+                // If Host, initialize the table in Firebase
+                setDoc(roomRef, { balls: createInitialRack(), turn: "host", timestamp: Date.now() });
             }
         });
 
@@ -119,30 +123,36 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             // Pockets
-            ctx.fillStyle = "#000";
+            ctx.fillStyle = "#0a0a0a";
             [{x:0,y:0},{x:canvas.width/2,y:0},{x:canvas.width,y:0},{x:0,y:canvas.height},{x:canvas.width/2,y:canvas.height},{x:canvas.width,y:canvas.height}].forEach(p => {
-                ctx.beginPath(); ctx.arc(p.x, p.y, ballRadius*1.6, 0, 7); ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x, p.y, ballRadius * 1.7, 0, 7); ctx.fill();
             });
 
+            // Balls
             balls.forEach(b => {
+                if (b.inPocket) return;
                 ctx.beginPath();
                 ctx.arc(b.x, b.y, ballRadius, 0, 7);
                 ctx.fillStyle = b.color;
                 ctx.fill();
+                ctx.strokeStyle = "rgba(0,0,0,0.2)"; ctx.stroke();
+                // Numbers
                 if(b.num > 0) {
-                    ctx.fillStyle = "white"; ctx.font = "bold 10px Arial";
-                    ctx.textAlign = "center"; ctx.fillText(b.num, b.x, b.y+4);
+                    ctx.fillStyle = "white"; ctx.font = `bold ${ballRadius}px Arial`;
+                    ctx.textAlign = "center"; ctx.fillText(b.num, b.x, b.y + (ballRadius/2.5));
                 }
             });
 
-            // Arrow Aiming
+            // Aiming Arrow/Line
             if (isDragging && turn === myRole) {
                 ctx.beginPath();
                 ctx.moveTo(balls[0].x, balls[0].y);
                 ctx.lineTo(mousePos.x, mousePos.y);
                 ctx.strokeStyle = "#00f2ff";
                 ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
                 ctx.stroke();
+                ctx.setLineDash([]);
             }
             requestAnimationFrame(draw);
         }
@@ -151,48 +161,55 @@
             if (!isDragging) return;
             isDragging = false;
             
-            const dx = (balls[0].x - mousePos.x) * 0.14;
-            const dy = (balls[0].y - mousePos.y) * 0.14;
+            // Power and direction
+            const dx = (balls[0].x - mousePos.x) * 0.15;
+            const dy = (balls[0].y - mousePos.y) * 0.15;
             
             balls[0].vx = dx; balls[0].vy = dy;
 
-            // Instant physics update for sync
-            for(let step = 0; step < 180; step++) {
+            // Simple physics simulation for instant sync
+            for(let step = 0; step < 150; step++) {
                 balls.forEach(b => {
                     b.x += b.vx || 0; b.y += b.vy || 0;
                     b.vx *= 0.985; b.vy *= 0.985;
+                    // Wall bounce
                     if(b.x < ballRadius || b.x > canvas.width - ballRadius) b.vx *= -1;
                     if(b.y < ballRadius || b.y > canvas.height - ballRadius) b.vy *= -1;
                 });
-                // Collisions
+                // Simple Ball-to-Ball Collision
                 for(let i=0; i<balls.length; i++) {
                     for(let j=i+1; j<balls.length; j++) {
-                        if(Math.hypot(balls[i].x-balls[j].x, balls[i].y-balls[j].y) < ballRadius*2) {
-                            let tx = balls[i].vx; let ty = balls[i].vy;
+                        let dist = Math.hypot(balls[i].x - balls[j].x, balls[i].y - balls[j].y);
+                        if(dist < ballRadius * 2) {
+                            let tempX = balls[i].vx; let tempY = balls[i].vy;
                             balls[i].vx = balls[j].vx; balls[i].vy = balls[j].vy;
-                            balls[j].vx = tx; balls[j].vy = ty;
+                            balls[j].vx = tempX; balls[j].vy = tempY;
                         }
                     }
                 }
             }
 
+            // Sync result to Firebase and switch turn
             await updateDoc(roomRef, {
                 balls: balls,
                 turn: myRole === "host" ? "guest" : "host"
             });
         }
 
-        const getPointer = (e) => {
+        const getCoord = (e) => {
             const rect = canvas.getBoundingClientRect();
             const cx = e.touches ? e.touches[0].clientX : e.clientX;
             const cy = e.touches ? e.touches[0].clientY : e.clientY;
             return { x: cx - rect.left, y: cy - rect.top };
         };
 
-        canvas.addEventListener("mousedown", () => { if(turn === myRole) isDragging = true; });
+        // Event Listeners for Aiming
+        canvas.addEventListener("mousedown", (e) => { if(turn === myRole) isDragging = true; });
         canvas.addEventListener("touchstart", (e) => { if(turn === myRole) isDragging = true; e.preventDefault(); }, {passive:false});
-        window.addEventListener("mousemove", (e) => { mousePos = getPointer(e); });
-        window.addEventListener("touchmove", (e) => { mousePos = getPointer(e); });
+        
+        window.addEventListener("mousemove", (e) => { mousePos = getCoord(e); });
+        window.addEventListener("touchmove", (e) => { mousePos = getCoord(e); });
+        
         window.addEventListener("mouseup", processShot);
         window.addEventListener("touchend", processShot);
 
