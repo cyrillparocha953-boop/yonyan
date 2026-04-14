@@ -3,28 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>8-Ball Multiplayer Universe</title>
+    <title>8-BALL UNIVERSE 1v1</title>
     <style>
-        body { margin: 0; background: #050505; color: #fff; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; overflow: hidden; touch-action: none; }
-        #header { width: 100%; background: #000; padding: 15px; display: flex; justify-content: space-around; align-items: center; border-bottom: 2px solid #333; }
-        #table-container { position: relative; border: 15px solid #3e2723; border-radius: 12px; margin-top: 20px; box-shadow: 0 0 50px rgba(0,0,0,1); background: #1b5e20; }
+        body { margin: 0; background: #050505; color: #fff; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; touch-action: none; }
+        #header { width: 100%; background: #000; padding: 10px; display: flex; justify-content: space-around; align-items: center; border-bottom: 2px solid #00f2ff; }
+        #table-container { position: relative; border: 12px solid #3e2723; border-radius: 10px; margin-top: 15px; background: #1b5e20; box-shadow: 0 0 30px #000; }
         canvas { display: block; background: #2e7d32; }
-        .badge { padding: 8px 15px; border-radius: 5px; font-weight: bold; text-transform: uppercase; }
-        .my-turn { background: #00f2ff; color: #000; box-shadow: 0 0 15px #00f2ff; }
-        .not-turn { background: #333; color: #777; }
-        #room-tag { font-size: 10px; color: #ff007f; margin-top: 5px; }
+        .badge { padding: 5px 12px; border-radius: 4px; font-weight: bold; font-size: 14px; }
+        .my-turn { background: #00f2ff; color: #000; box-shadow: 0 0 10px #00f2ff; }
+        .waiting { background: #333; color: #666; }
+        #info { font-size: 11px; color: #ff007f; margin: 5px; text-align: center; }
     </style>
 </head>
 <body>
 
     <div id="header">
-        <div id="status" class="badge not-turn">CONNECTING...</div>
-        <div style="text-align: center;">
-            <div style="font-size: 10px; color: #888;">8-BALL MULTIPLAYER</div>
-            <div id="room-id" style="font-weight: bold; color: #00f2ff;">---</div>
-        </div>
+        <div id="status-box" class="badge waiting">CONNECTING...</div>
+        <div id="room-display" style="font-weight: bold;">ROOM: ---</div>
     </div>
-    <div id="room-tag">SHARE URL TO CHALLENGE A FRIEND</div>
+    <div id="info">COPY FULL URL & SEND TO FRIEND TO PLAY</div>
 
     <div id="table-container">
         <canvas id="poolCanvas"></canvas>
@@ -46,95 +43,78 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // --- ROOM LOGIC ---
         const urlParams = new URLSearchParams(window.location.search);
         let roomId = urlParams.get('room');
         const isHost = !roomId;
         if (isHost) {
-            roomId = "ROOM-" + Math.random().toString(36).substring(2, 7).toUpperCase();
+            roomId = "POOL-" + Math.random().toString(36).substring(2, 7).toUpperCase();
             window.history.pushState({}, '', `?room=${roomId}`);
         }
-        document.getElementById('room-id').innerText = roomId;
+        document.getElementById('room-display').innerText = roomId;
 
         const canvas = document.getElementById("poolCanvas");
         const ctx = canvas.getContext("2d");
-        canvas.width = Math.min(window.innerWidth - 50, 800);
+        canvas.width = Math.min(window.innerWidth - 30, 700);
         canvas.height = canvas.width / 2;
         const ballRadius = canvas.width / 45;
 
         let balls = [];
-        let turn = "host"; // host or guest
+        let turn = "host"; 
         let isDragging = false;
         let mousePos = { x: 0, y: 0 };
         const myRole = isHost ? "host" : "guest";
 
-        // --- INITIALIZE GAME ---
-        function createInitialBalls() {
-            let b = [];
-            // Cue Ball
-            b.push({ x: canvas.width * 0.25, y: canvas.height / 2, color: "#fff", type: "cue", vx: 0, vy: 0, num: 0 });
-            // 8-Ball Rack (Simplified for sync)
-            const rackX = canvas.width * 0.7;
-            const rackY = canvas.height / 2;
-            let count = 1;
-            for (let i = 0; i < 3; i++) {
-                for (let j = 0; j <= i; j++) {
-                    let color = (count === 4) ? "#000" : `hsl(${count * 40}, 70%, 50%)`;
-                    b.push({ x: rackX + i * 22, y: rackY - (i * 11) + (j * 22), color: color, type: "object", vx: 0, vy: 0, num: count });
-                    count++;
-                }
+        function createBalls() {
+            let b = [{ x: canvas.width * 0.25, y: canvas.height / 2, color: "#fff", num: 0, vx: 0, vy: 0 }];
+            for (let i = 1; i <= 8; i++) {
+                b.push({ 
+                    x: canvas.width * 0.7 + (i * 2), 
+                    y: canvas.height / 2 - 40 + (i * 10), 
+                    color: i === 8 ? "#000" : `hsl(${i * 45}, 70%, 50%)`, 
+                    num: i, vx: 0, vy: 0 
+                });
             }
             return b;
         }
 
-        const roomRef = doc(db, "pool_online", roomId);
+        const roomRef = doc(db, "pool_v2", roomId);
 
-        // Sync from Firebase
-        onSnapshot(roomRef, (snapshot) => {
-            if (snapshot.exists()) {
-                const data = snapshot.data();
+        onSnapshot(roomRef, (snap) => {
+            if (snap.exists()) {
+                const data = snap.data();
                 balls = data.balls;
                 turn = data.turn;
-                updateUI();
+                const status = document.getElementById("status-box");
+                if (turn === myRole) {
+                    status.innerText = "YOUR TURN";
+                    status.className = "badge my-turn";
+                } else {
+                    status.innerText = "WAITING...";
+                    status.className = "badge waiting";
+                }
             } else if (isHost) {
-                setDoc(roomRef, { balls: createInitialBalls(), turn: "host", moving: false });
+                setDoc(roomRef, { balls: createBalls(), turn: "host" });
             }
         });
 
-        function updateUI() {
-            const status = document.getElementById("status");
-            if (turn === myRole) {
-                status.innerText = "YOUR TURN";
-                status.className = "badge my-turn";
-            } else {
-                status.innerText = "WAITING...";
-                status.className = "badge not-turn";
-            }
-        }
-
-        // --- DRAWING & CONTROLS ---
         function draw() {
             ctx.fillStyle = "#2e7d32";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+            
             // Pockets
             ctx.fillStyle = "#000";
             [{x:0,y:0},{x:canvas.width/2,y:0},{x:canvas.width,y:0},{x:0,y:canvas.height},{x:canvas.width/2,y:canvas.height},{x:canvas.width,y:canvas.height}].forEach(p => {
-                ctx.beginPath(); ctx.arc(p.x, p.y, ballRadius*1.8, 0, 7); ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x, p.y, ballRadius*1.5, 0, 7); ctx.fill();
             });
 
             balls.forEach(b => {
-                if (b.inPocket) return;
                 ctx.beginPath();
                 ctx.arc(b.x, b.y, ballRadius, 0, 7);
                 ctx.fillStyle = b.color;
                 ctx.fill();
-                // Number
                 if(b.num > 0) {
-                    ctx.fillStyle = "white";
-                    ctx.font = "10px Arial";
-                    ctx.textAlign = "center";
-                    ctx.fillText(b.num, b.x, b.y + 4);
+                    ctx.fillStyle = "white"; ctx.font = "bold 10px Arial";
+                    ctx.textAlign = "center"; ctx.fillText(b.num, b.x, b.y+3);
                 }
             });
 
@@ -143,19 +123,29 @@
                 ctx.moveTo(balls[0].x, balls[0].y);
                 ctx.lineTo(mousePos.x, mousePos.y);
                 ctx.strokeStyle = "#00f2ff";
-                ctx.setLineDash([5, 5]);
                 ctx.stroke();
-                ctx.setLineDash([]);
             }
             requestAnimationFrame(draw);
         }
 
-        async function shoot(dx, dy) {
-            balls[0].vx = dx * 0.15;
-            balls[0].vy = dy * 0.15;
+        async function handleShot() {
+            if (!isDragging) return;
+            isDragging = false;
+            const dx = (balls[0].x - mousePos.x) * 0.12;
+            const dy = (balls[0].y - mousePos.y) * 0.12;
             
-            // Physics simulation locally before sync
-            simulatePhysics();
+            // Apply simple physics to balls array
+            balls[0].vx = dx; balls[0].vy = dy;
+            
+            // Instant simulate for sync
+            for(let i=0; i<150; i++) {
+                balls.forEach(b => {
+                    b.x += b.vx || 0; b.y += b.vy || 0;
+                    b.vx *= 0.98; b.vy *= 0.98;
+                    if(b.x < ballRadius || b.x > canvas.width-ballRadius) b.vx *= -1;
+                    if(b.y < ballRadius || b.y > canvas.height-ballRadius) b.vy *= -1;
+                });
+            }
 
             await updateDoc(roomRef, {
                 balls: balls,
@@ -163,55 +153,19 @@
             });
         }
 
-        function simulatePhysics() {
-            for(let step = 0; step < 200; step++) { // Fast forward physics
-                balls.forEach(b => {
-                    b.x += b.vx; b.y += b.vy;
-                    b.vx *= 0.98; b.vy *= 0.98;
-                    if(b.x < ballRadius || b.x > canvas.width - ballRadius) b.vx *= -1;
-                    if(b.y < ballRadius || b.y > canvas.height - ballRadius) b.vy *= -1;
-                });
-                // Simple collision
-                for(let i=0; i<balls.length; i++) {
-                    for(let j=i+1; j<balls.length; j++) {
-                        let dist = Math.hypot(balls[i].x - balls[j].x, balls[i].y - balls[j].y);
-                        if(dist < ballRadius*2) {
-                            let tempX = balls[i].vx; let tempY = balls[i].vy;
-                            balls[i].vx = balls[j].vx; balls[i].vy = balls[j].vy;
-                            balls[j].vx = tempX; balls[j].vy = tempY;
-                        }
-                    }
-                }
-            }
-        }
-
-        function getMouse(e) {
+        const getMouse = (e) => {
             const rect = canvas.getBoundingClientRect();
             const cx = e.touches ? e.touches[0].clientX : e.clientX;
             const cy = e.touches ? e.touches[0].clientY : e.clientY;
             return { x: cx - rect.left, y: cy - rect.top };
-        }
+        };
 
-        canvas.addEventListener("mousedown", (e) => { if(turn === myRole) isDragging = true; });
+        canvas.addEventListener("mousedown", () => { if(turn === myRole) isDragging = true; });
         canvas.addEventListener("touchstart", (e) => { if(turn === myRole) isDragging = true; e.preventDefault(); }, {passive:false});
-
         window.addEventListener("mousemove", (e) => { mousePos = getMouse(e); });
         window.addEventListener("touchmove", (e) => { mousePos = getMouse(e); });
-
-        window.addEventListener("mouseup", (e) => {
-            if(!isDragging) return;
-            isDragging = false;
-            const dx = balls[0].x - mousePos.x;
-            const dy = balls[0].y - mousePos.y;
-            shoot(dx, dy);
-        });
-        window.addEventListener("touchend", (e) => {
-            if(!isDragging) return;
-            isDragging = false;
-            const dx = balls[0].x - mousePos.x;
-            const dy = balls[0].y - mousePos.y;
-            shoot(dx, dy);
-        });
+        window.addEventListener("mouseup", handleShot);
+        window.addEventListener("touchend", handleShot);
 
         draw();
     </script>
